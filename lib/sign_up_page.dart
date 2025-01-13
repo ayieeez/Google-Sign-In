@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'login_page.dart';
 import 'package:firebase_auth/firebase_auth.dart'; // Import Firebase Auth
 import 'package:firebase_database/firebase_database.dart'; // Import Firebase Database
+import 'package:google_sign_in/google_sign_in.dart'; // Import Google Sign-In package
 
 class SignUpPage extends StatefulWidget {
   @override
@@ -17,6 +18,11 @@ class _SignUpPageState extends State<SignUpPage> {
   final FocusNode _focusNode = FocusNode();
 
   bool _isStudent = false;
+  bool _isPasswordVisible = false;
+  bool _isConfirmPasswordVisible = false;
+
+  GoogleSignIn _googleSignIn =
+      GoogleSignIn(scopes: ['email']); // Initialize GoogleSignIn instance
 
   @override
   void dispose() {
@@ -25,6 +31,78 @@ class _SignUpPageState extends State<SignUpPage> {
     _confirmPasswordController.dispose();
     _focusNode.dispose();
     super.dispose();
+  }
+
+  // Method for Google Sign-In
+  Future<void> _signInWithGoogle() async {
+    try {
+      GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+      if (googleUser == null) {
+        // User canceled the sign-in
+        return;
+      }
+      GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+
+      // Create a new credential with Google Auth Token
+      AuthCredential credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      // Sign in to Firebase using the Google credentials
+      UserCredential userCredential =
+          await FirebaseAuth.instance.signInWithCredential(credential);
+
+      // After signing in, check if the user exists in Firebase Database
+      _checkUserData(userCredential.user!.uid);
+    } on FirebaseAuthException catch (e) {
+      _showErrorDialog('Google sign-in failed: ${e.message}');
+    } catch (e) {
+      _showErrorDialog('Error during Google sign-in: ${e.toString()}');
+    }
+  }
+
+  // Check if user exists in Firebase Database, if not save user data
+  Future<void> _checkUserData(String userId) async {
+    DatabaseReference userRef = FirebaseDatabase.instance.ref('users/$userId');
+
+    try {
+      // Using get() instead of once()
+      final snapshot = await userRef.get();
+
+      if (snapshot.exists) {
+        // User already exists in the database, navigate to home
+        _showSuccessDialog('User signed in successfully with Google!');
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => LoginPage()),
+        );
+      } else {
+        // User doesn't exist, so save data to the database
+        _saveUserData(userId);
+      }
+    } catch (e) {
+      // Handle errors in fetching data
+      print('Error fetching user data: $e');
+    }
+  }
+
+  // Save user data to Firebase Database
+  Future<void> _saveUserData(String userId) async {
+    DatabaseReference userRef = FirebaseDatabase.instance.ref('users/$userId');
+    String emailOrName = _emailOrNameController.text;
+    String role = _isStudent ? 'student' : 'staff';
+
+    await userRef.set({
+      'email_or_id': emailOrName,
+      'role': role,
+    });
+
+    _showSuccessDialog('User data saved successfully!');
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => LoginPage()),
+    );
   }
 
   void _signUp() async {
@@ -41,43 +119,25 @@ class _SignUpPageState extends State<SignUpPage> {
       try {
         UserCredential userCredential;
 
-        // Check if the user is a student or staff
         if (_isStudent) {
-          int studentID = int.parse(emailOrName);
-          if (studentID < 2018000000 || studentID > 2024999999) {
-            _showErrorDialog(
-                'Invalid student ID. Must be within the allowed range.');
-            return;
-          }
-
-          // Create student user using a generated email
-          String email = '$emailOrName@university.edu'; // Modify as needed
+          String email = '$emailOrName@university.edu';
           userCredential =
               await FirebaseAuth.instance.createUserWithEmailAndPassword(
             email: email,
             password: password,
           );
 
-          // Store student data in Realtime Database
-          await _saveUserData(userCredential.user!.uid, emailOrName, 'student');
+          await _saveUserData(userCredential.user!.uid);
           _showSuccessDialog('Student signed up successfully!');
         } else {
-          // Ensure staff only uses alphabets for their name
-          if (!RegExp(r'^[a-zA-Z]+$').hasMatch(emailOrName)) {
-            _showErrorDialog('Staff name should only contain alphabets.');
-            return;
-          }
-
-          // Create a staff user using the staff name instead of email
+          String email = '$emailOrName@staff.edu';
           userCredential =
               await FirebaseAuth.instance.createUserWithEmailAndPassword(
-            email:
-                '$emailOrName@staff.edu', // Create a fake email for Firebase Auth
+            email: email,
             password: password,
           );
 
-          // Store staff data in Realtime Database
-          await _saveUserData(userCredential.user!.uid, emailOrName, 'staff');
+          await _saveUserData(userCredential.user!.uid);
           _showSuccessDialog('Staff signed up successfully!');
         }
       } on FirebaseAuthException catch (e) {
@@ -86,17 +146,6 @@ class _SignUpPageState extends State<SignUpPage> {
         _showErrorDialog('An error occurred: ${e.toString()}');
       }
     }
-  }
-
-  Future<void> _saveUserData(
-      String userId, String emailOrName, String role) async {
-    DatabaseReference userRef =
-        FirebaseDatabase.instance.ref('users/$userId'); // Updated to use ref()
-
-    await userRef.set({
-      'email_or_id': emailOrName,
-      'role': role,
-    });
   }
 
   void _showErrorDialog(String message) {
@@ -219,7 +268,7 @@ class _SignUpPageState extends State<SignUpPage> {
                         SizedBox(height: 20),
                         TextFormField(
                           controller: _passwordController,
-                          obscureText: true,
+                          obscureText: !_isPasswordVisible,
                           decoration: InputDecoration(
                             labelText: 'Password',
                             labelStyle: TextStyle(color: Colors.grey[600]),
@@ -236,6 +285,19 @@ class _SignUpPageState extends State<SignUpPage> {
                                 color: Colors.grey[400]!,
                               ),
                             ),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                _isPasswordVisible
+                                    ? Icons.visibility
+                                    : Icons.visibility_off,
+                                color: Colors.grey[600],
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _isPasswordVisible = !_isPasswordVisible;
+                                });
+                              },
+                            ),
                           ),
                           validator: (value) {
                             if (value == null || value.isEmpty) {
@@ -247,7 +309,7 @@ class _SignUpPageState extends State<SignUpPage> {
                         SizedBox(height: 20),
                         TextFormField(
                           controller: _confirmPasswordController,
-                          obscureText: true,
+                          obscureText: !_isConfirmPasswordVisible,
                           decoration: InputDecoration(
                             labelText: 'Confirm Password',
                             labelStyle: TextStyle(color: Colors.grey[600]),
@@ -263,6 +325,20 @@ class _SignUpPageState extends State<SignUpPage> {
                               borderSide: BorderSide(
                                 color: Colors.grey[400]!,
                               ),
+                            ),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                _isConfirmPasswordVisible
+                                    ? Icons.visibility
+                                    : Icons.visibility_off,
+                                color: Colors.grey[600],
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _isConfirmPasswordVisible =
+                                      !_isConfirmPasswordVisible;
+                                });
+                              },
                             ),
                           ),
                           validator: (value) {
@@ -299,15 +375,42 @@ class _SignUpPageState extends State<SignUpPage> {
                           },
                           child: Text('Already have an account? Login'),
                         ),
+                        SizedBox(height: 20),
+                        GestureDetector(
+                          onTap: _signInWithGoogle, // Trigger Google Sign-In
+                          child: Container(
+                            padding: EdgeInsets.symmetric(vertical: 12),
+                            width: double.infinity,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              color: Colors.white,
+                              border: Border.all(color: Colors.grey),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Image.asset(
+                                  'assets/images/google_logo.png', // Add Google logo image here
+                                  height: 24,
+                                  width: 24,
+                                ),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Sign up with Google',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    color: Colors.black,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
                 ),
                 SizedBox(height: 20),
-                Text(
-                  'SIGN UP PAGE',
-                  style: TextStyle(color: Colors.grey[600]),
-                ),
               ],
             ),
           ),

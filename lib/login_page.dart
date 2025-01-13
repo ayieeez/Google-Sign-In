@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart'; // Import Firebase Auth
 import 'package:firebase_database/firebase_database.dart'; // Import Firebase Database
+import 'package:google_sign_in/google_sign_in.dart'; // Import Google Sign-In
 import 'sign_up_page.dart';
 import 'admin_landing_page.dart';
 import 'student_landing_page.dart';
@@ -16,6 +17,7 @@ class _LoginPageState extends State<LoginPage> {
   final TextEditingController _controller = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
+  bool _isLoading = false;
 
   @override
   void initState() {
@@ -52,43 +54,32 @@ class _LoginPageState extends State<LoginPage> {
     String input = _controller.text;
     String password = _passwordController.text;
 
-    // Check if the user is 'root' and the password is 'adminonly123'
+    // Existing login code remains the same
     if (input == 'root' && password == 'adminonly123') {
-      // Store admin data in the database if it doesn't already exist
       await _storeAdminData();
-
-      // Navigate to Admin Landing Page
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (context) => AdminLandingPage()),
       );
     } else {
-      // Proceed with Firebase Authentication for students and staff
       if (_formKey.currentState!.validate()) {
         try {
           UserCredential userCredential;
-
-          // Check if the input is a student ID (numeric)
           if (RegExp(r'^[0-9]+$').hasMatch(input)) {
             int studentID = int.parse(input);
-
-            // Validate student ID range
             if (studentID < 2018000000 || studentID > 2024999999) {
               _showErrorDialog(
                   'Invalid student ID. Must be within the allowed range.');
               return;
             }
-
-            // Sign in as a student using a generated email
-            String email = '$input@university.edu'; // Assumed student email
+            String email = '$input@university.edu';
             userCredential =
                 await FirebaseAuth.instance.signInWithEmailAndPassword(
               email: email,
               password: password,
             );
           } else if (RegExp(r'^[a-zA-Z]+$').hasMatch(input)) {
-            // If the input contains only alphabets, treat it as a staff login
-            String email = '$input@staff.edu'; // Fake email for staff
+            String email = '$input@staff.edu';
             userCredential =
                 await FirebaseAuth.instance.signInWithEmailAndPassword(
               email: email,
@@ -99,29 +90,25 @@ class _LoginPageState extends State<LoginPage> {
                 'Invalid input. Please enter a valid student ID or staff name.');
             return;
           }
-
-          // Fetch user data from Realtime Database
           DatabaseReference userRef = FirebaseDatabase.instance
-              .ref('users/${userCredential.user!.uid}'); // Updated to use ref()
-          DataSnapshot snapshot =
-              await userRef.get(); // Use get() instead of once()
-
+              .ref('users/${userCredential.user!.uid}');
+          DataSnapshot snapshot = await userRef.get();
           if (snapshot.exists) {
-            String role =
-                snapshot.child('role').value as String; // Cast value to String
-
-            // Navigate based on user type
+            String role = snapshot.child('role').value as String;
             switch (role) {
               case 'student':
                 Navigator.pushReplacement(
                   context,
-                  MaterialPageRoute(builder: (context) => StudentLandingPage()),
+                  MaterialPageRoute(
+                      builder: (context) => const StudentLandingPage()),
                 );
                 break;
               case 'staff':
                 Navigator.pushReplacement(
                   context,
-                  MaterialPageRoute(builder: (context) => StaffLandingPage()),
+                  MaterialPageRoute(
+                      builder: (context) =>
+                          const StaffLandingPage(isStaff: true)),
                 );
                 break;
               default:
@@ -136,6 +123,64 @@ class _LoginPageState extends State<LoginPage> {
           _showErrorDialog('An error occurred: ${e.toString()}');
         }
       }
+    }
+  }
+
+  Future<void> _signInWithGoogle() async {
+    try {
+      final GoogleSignIn googleSignIn = GoogleSignIn();
+      final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
+      if (googleUser == null) {
+        _showErrorDialog('Google Sign-In canceled.');
+        return;
+      }
+      final GoogleSignInAuthentication googleAuth =
+          await googleUser.authentication;
+
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      final userCredential =
+          await FirebaseAuth.instance.signInWithCredential(credential);
+
+      // Fetch the user's role from the database
+      DatabaseReference userRef =
+          FirebaseDatabase.instance.ref('users/${userCredential.user!.uid}');
+      DataSnapshot snapshot = await userRef.get();
+
+      if (snapshot.exists) {
+        String role = snapshot.child('role').value as String;
+        switch (role) {
+          case 'student':
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                  builder: (context) => const StudentLandingPage()),
+            );
+            break;
+          case 'staff':
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                  builder: (context) => const StaffLandingPage(isStaff: true)),
+            );
+            break;
+          case 'admin':
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (context) => AdminLandingPage()),
+            );
+            break;
+          default:
+            _showErrorDialog('Unknown user role');
+        }
+      } else {
+        _showErrorDialog('User data not found in database');
+      }
+    } catch (e) {
+      _showErrorDialog('Google Sign-In failed: ${e.toString()}');
     }
   }
 
@@ -269,6 +314,33 @@ class _LoginPageState extends State<LoginPage> {
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 18,
+                              ),
+                            ),
+                          ),
+                        ),
+                        SizedBox(height: 10),
+                        // Google Sign-In Button (size matched with Login button)
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: _signInWithGoogle,
+                            style: ElevatedButton.styleFrom(
+                              padding: EdgeInsets.symmetric(vertical: 16),
+                              backgroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              side: BorderSide(color: Colors.grey[400]!),
+                            ),
+                            icon: Image.asset(
+                              'assets/images/google_logo.png', // Add your Google logo path here
+                              height: 24,
+                            ),
+                            label: Text(
+                              'Sign in with Google',
+                              style: TextStyle(
+                                color: Colors.black,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
                           ),
