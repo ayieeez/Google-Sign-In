@@ -4,9 +4,7 @@ A new Flutter project for integrating Google Sign-In functionality.
 
 ## 2410-ICT602 Lab Work 9 - Google Sign In
 
-### Accessing The Hardware
-
-This project is a starting point for a Flutter application that focuses on accessing hardware features and integrating Google Sign-In functionality.
+This project is a starting point for a Flutter application that focuses on integrating Google Sign-In functionality.
 
 ## Initialization Steps for Google Sign-In
 
